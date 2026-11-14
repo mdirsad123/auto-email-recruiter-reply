@@ -2,6 +2,10 @@
 
 Standalone FastAPI + n8n project (no PostgreSQL, SQLite or SQLAlchemy database).
 
+# n8n workflow screenshot
+<img width="1325" height="568" alt="n8n-workflow" src="https://github.com/user-attachments/assets/1c54f731-5b13-41cc-9919-b243dc10d0fd" />
+
+
 **Windows installation directory:** `D:\ird-projects\sahil_projects\jobbot-recruiter-email`
 **Live email intake:** Gmail trigger every 5 minutes. If several new messages arrived
 since the previous poll, the trigger can output multiple emails; all are queued
