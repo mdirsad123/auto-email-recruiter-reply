@@ -1,0 +1,30 @@
+# Separate n8n service for the recruiter e-mail automation.
+#   cd n8n
+#   docker compose up -d
+#   open http://localhost:5678
+# n8n reaches the Python API on your PC through host.docker.internal:8090.
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n-recruiter-email
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - TZ=Asia/Kolkata
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      - N8N_SECURE_COOKIE=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # keep "false" until you trust the drafts; must match AUTO_SEND_RECRUITER_REPLY in ../.env
+      - AUTO_SEND_RECRUITER_REPLY=true
+      # Single production execution (Gmail polls + startup catch-up): queue overlaps.
+      - N8N_CONCURRENCY_PRODUCTION_LIMIT=1
+      - WEBHOOK_URL=http://localhost:5678/
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./:/workflows:ro
+volumes:
+  n8n_data:

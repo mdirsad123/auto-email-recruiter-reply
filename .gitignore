@@ -1,0 +1,66 @@
+# Environment files / secrets (keep safe samples)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+**/credentials*.json
+**/oauth*.json
+**/token*.json
+**/token*.pickle
+
+# Personal candidate facts and email signature
+/config/experience_details.md
+/config/recruiter_email_template.json
+/config/knowledge_sync_state.json
+
+# Private runtime state, email contents, AI requests, and logs
+/data/*
+!/data/.gitkeep
+/logs/*
+!/logs/.gitkeep
+*.log
+*.json.lock
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Browser profiles / local session cookies
+/chromedebug/
+/chrome-profile/
+/.chrome-profile/
+/browser-profile/
+
+# n8n local state and private overrides (keep public workflow JSON after sanitizing it)
+/n8n/.n8n/
+/n8n/n8n_data/
+/n8n/docker-compose.override.yml
+/n8n/*_private.json
+
+# Python caches and virtual environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
