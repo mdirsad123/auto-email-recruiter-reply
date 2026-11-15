@@ -159,3 +159,18 @@ Real end-to-end Gmail OAuth delivery, n8n executions, Chrome Web UI and actual
 AI provider performance need validation on your Windows machine with signed-in
 accounts; offline checks cannot assert those external services are working.
 Use the draft-only workflow and `docs/RECRUITER_TEST_EMAILS.md` for smoke tests.
+
+---------------------------------------------
+# Run Debbuger port in RustDesk Ubuntu terminal
+cd ~/ird-projects/auto-email-recruiter-reply
+chmod +x start_chromium_debug.sh
+./start_chromium_debug.sh
+
+-- check debbuger port: curl http://127.0.0.1:9222/json/version
+
+# Run email fast api in Ubuntu terminal
+cd ~/ird-projects/auto-email-recruiter-reply
+chmod +x start_recruiter_email.sh
+./start_recruiter_email.sh
+
+-- check api health: curl http://localhost:8090/health
