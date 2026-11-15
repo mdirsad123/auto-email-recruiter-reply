@@ -7,6 +7,9 @@
     "web_max_retries": 0
   },
   "providers": {
+    "cohere_api": {
+      "default_model": "command-a-plus-05-2026"
+    },
     "claude_api": {
       "model_env": "ANTHROPIC_MODEL",
       "default_model": "claude-opus-5-5",
@@ -34,7 +37,7 @@
       "project_url_env": "CLAUDE_PROJECT_URL",
       "project_name_env": "CLAUDE_PROJECT_NAME",
       "verify_knowledge_file_visible": false,
-      "response_timeout_seconds": 900,
+      "response_timeout_seconds": 75,
       "selectors": {
         "composer": [
           "div.ProseMirror[contenteditable='true']",
@@ -66,7 +69,7 @@
       "project_url_env": "CHATGPT_PROJECT_URL",
       "project_name_env": "CHATGPT_PROJECT_NAME",
       "verify_knowledge_file_visible": false,
-      "response_timeout_seconds": 1200,
+      "response_timeout_seconds": 75,
       "selectors": {
         "composer": [
           "#prompt-textarea",

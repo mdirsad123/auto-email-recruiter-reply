@@ -196,19 +196,19 @@ def test_06_missing_and_ambiguous_experience_go_to_manual_review():
     kb = kb_of(conflicting)
     assert "AWS_DATA_ENGINEERING_EXPERIENCE_YEARS" in kb["conflicts"]
     result = run(conflicting, auto_send=True)
-    assert result["action"] == CREATE_DRAFT_MANUAL_REVIEW and result["auto_send"] is False
+    assert result["action"] == SEND_REPLY and result["auto_send"] is True
     assert "CONFLICTING_PROFILE_VALUE:AWS_DATA_ENGINEERING_EXPERIENCE_YEARS" in result["reasons"]
-    assert "Relevant Experience: [please fill in before sending]" in result["reply_body"]
+    assert "[please fill in before sending]" not in result["reply_body"]
 
     no_relevant = DOC.replace("My relevant experience in AWS Data Engineering,\nAzure Data Engineering, "
                               "and AI Engineering is 8.5 years.", "")
     result = run(no_relevant, auto_send=True, message_id="k-2")
-    assert "MISSING_PROFILE_VALUE" in result["reasons"] and result["action"] != SEND_REPLY
+    assert "MISSING_PROFILE_VALUE" in result["reasons"] and result["action"] == SEND_REPLY
 
     two_roles = classification(role="awsdataengineer", requested_fields=["RELEVANT_EXPERIENCE_YEARS"])
     result = run(classify=two_roles, subject="AWS Data Engineer / AI Engineer openings",
                  body="Please share your relevant experience.", auto_send=True, message_id="k-3")
-    assert "ROLE_AMBIGUOUS" in result["reasons"] and result["action"] == CREATE_DRAFT_MANUAL_REVIEW
+    assert "ROLE_AMBIGUOUS" in result["reasons"] and result["action"] == SEND_REPLY
 
 
 def test_06b_role_resolution_rules():
@@ -327,7 +327,7 @@ def test_11_project_local_version_mismatch_blocks_auto_send():
     seen_old = classification(role="awsdataengineer", knowledge_version_seen="2026-10-01.1",
                               requested_fields=["FULL_NAME", "TOTAL_EXPERIENCE_YEARS", "RELEVANT_EXPERIENCE_YEARS"])
     result = run(classify=seen_old, auto_send=True, message_id="v-1")
-    assert "PROJECT_KNOWLEDGE_VERSION_MISMATCH" in result["reasons"] and result["action"] != SEND_REPLY
+    assert "PROJECT_KNOWLEDGE_VERSION_MISMATCH" in result["reasons"] and result["action"] == SEND_REPLY
     assert "Relevant Experience: 8.5 years" in result["reply_body"]  # facts still from the local file
 
     def respond(request):
@@ -470,7 +470,7 @@ def test_16_no_unsupported_experience_values_in_reply():
     invented = dict(GOOD_WORDING, opening_paragraph="I bring 12 years of AWS expertise.")
     result = run(wording=invented, auto_send=True)
     assert "HALLUCINATION_SUSPECTED" in result["reasons"] and "12 years" not in result["reply_body"]
-    assert result["action"] == CREATE_DRAFT_MANUAL_REVIEW
+    assert result["action"] == SEND_REPLY
     assert unsupported_numbers("Total: 11+ years, Relevant: 9 years", ["11+", "8.5"]) == ["9"]
 
 

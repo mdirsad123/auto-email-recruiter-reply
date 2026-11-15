@@ -72,9 +72,12 @@ def env_int(name: str, default: int) -> int:
 # ---------------------------------------------------------------------------
 
 # Fixed priority order. Never changed by config, n8n or the caller.
-PROVIDER_PRIORITY = ("claude_api", "chatgpt_api", "claude_web", "chatgpt_web")
+PROVIDER_PRIORITY = ("cohere_api_1", "cohere_api_2", "cohere_api_3", "claude_api", "chatgpt_api", "claude_web", "chatgpt_web")
 
 PROVIDER_FLAGS = {
+    "cohere_api_1": "USE_COHERE_API",
+    "cohere_api_2": "USE_COHERE_API",
+    "cohere_api_3": "USE_COHERE_API",
     "claude_api": "USE_CLAUDE_API",
     "chatgpt_api": "USE_CHATGPT_API",
     "claude_web": "USE_CLAUDE_WEB",
@@ -82,7 +85,7 @@ PROVIDER_FLAGS = {
 }
 
 # "api" providers are retried with backoff; "web" providers are tried once.
-PROVIDER_KINDS = {"claude_api": "api", "chatgpt_api": "api", "claude_web": "web", "chatgpt_web": "web"}
+PROVIDER_KINDS = {"cohere_api_1": "api", "cohere_api_2": "api", "cohere_api_3": "api", "claude_api": "api", "chatgpt_api": "api", "claude_web": "web", "chatgpt_web": "web"}
 
 DEFAULT_RETRY = {
     "api_max_retries": 2,
@@ -102,7 +105,14 @@ def parse_flag(value: str | None, default: bool = True) -> bool:
 def read_provider_flags(env: dict[str, str] | None = None) -> dict[str, bool]:
     """Pure: {provider: enabled} from USE_* variables. Unset flags count as true (as in .env.example)."""
     source = os.environ if env is None else env
-    return {provider: parse_flag(source.get(var)) for provider, var in PROVIDER_FLAGS.items()}
+    flags = {provider: parse_flag(source.get(var)) for provider, var in PROVIDER_FLAGS.items()}
+    # Automatically enable configured Cohere key slots unless explicitly disabled.
+    # Empty slots are skipped, so a user with only key 1 has no wasted attempts.
+    for index in range(1, 4):
+        provider = f"cohere_api_{index}"
+        key_name = "COHERE_API_KEY" + (str(index) if index > 1 else "")
+        flags[provider] = parse_flag(source.get("USE_COHERE_API"), default=True) and bool(source.get(key_name, "").strip())
+    return flags
 
 
 @lru_cache(maxsize=4)
@@ -149,7 +159,9 @@ def load_ai_config(env: dict[str, str] | None = None, settings_path: Path | None
 
 def provider_settings(config: dict[str, Any], provider: str) -> dict[str, Any]:
     """Settings handed to one call_* function (never contains API keys)."""
+    name = "cohere_api" if provider.startswith("cohere_api_") else provider
     return {
+        **config.get("providers", {}).get(name, {}),
         **config.get("providers", {}).get(provider, {}),
         "timeout_seconds": config.get("timeout_seconds", 120.0),
         "markers": config.get("web_unavailable_markers", []),

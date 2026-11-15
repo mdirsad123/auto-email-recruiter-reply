@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 TITLE JobBot Recruiter Email - FastAPI
-set "PROJECT_ROOT=D:\ird-projects\sahil_projects\jobbot-recruiter-email"
+set "PROJECT_ROOT=D:\ird-projects\sahil_projects\auto-email-recruiter-reply"
 set "SHARED_VENV=D:\ird-projects\sahil_projects\my_jobbots_automation\.venv"
 set "CHROME_PORT=9222"
 set "CHROME_PROFILE=C:\chromedebug"

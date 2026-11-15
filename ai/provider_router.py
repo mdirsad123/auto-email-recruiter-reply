@@ -54,6 +54,7 @@ from ai.provider_result import COMPLETED, AIRequest, make_attempt
 from ai.providers.anthropic_api import call_claude_api
 from ai.providers.chatgpt_web import call_chatgpt_web
 from ai.providers.claude_web import call_claude_web
+from ai.providers.cohere_api import call_cohere_1, call_cohere_2, call_cohere_3
 from ai.providers.openai_api import call_openai_api
 from ai.settings import PROVIDER_KINDS, PROVIDER_PRIORITY, load_ai_config, provider_settings
 
@@ -62,6 +63,9 @@ Validator = Callable[[Any, dict], Any]
 
 # Fixed priority order (dicts keep insertion order).
 PROVIDER_FUNCTIONS: dict[str, ProviderFunction] = {
+    "cohere_api_1": call_cohere_1,
+    "cohere_api_2": call_cohere_2,
+    "cohere_api_3": call_cohere_3,
     "claude_api": call_claude_api,
     "chatgpt_api": call_openai_api,
     "claude_web": call_claude_web,
@@ -80,7 +84,8 @@ def get_enabled_providers(config: dict[str, Any]) -> list[str]:
 
 
 def max_attempts_for(provider: str, retry: dict[str, Any]) -> int:
-    retries = retry["api_max_retries"] if PROVIDER_KINDS.get(provider) == "api" else retry["web_max_retries"]
+    retries = (0 if provider.startswith("cohere_api_") else
+               retry["api_max_retries"] if PROVIDER_KINDS.get(provider) == "api" else retry["web_max_retries"])
     return 1 + max(0, int(retries))
 
 
@@ -146,6 +151,12 @@ def try_provider(name: str, request: AIRequest, *, config: dict[str, Any], funct
                 continue
             return None
         except JobBotAIError as exc:
+            if name.startswith("cohere_api_") and exc.failure_type in {FailureType.OUTPUT_VALIDATION, FailureType.OUTPUT_TRUNCATED}:
+                _record(attempts, log, **base, attempt=attempt, result="FALLBACK",
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        failure_type=exc.failure_type, fallback_reason=exc.failure_type,
+                        error="Cohere output did not validate", context=context)
+                return None
             exc.provider = exc.provider or name
             _record(attempts, log, **base, attempt=attempt, result="FAILED",
                     duration_ms=int((time.monotonic() - started) * 1000), failure_type=exc.failure_type,
@@ -195,7 +206,7 @@ def execute_ai_task(
     if not enabled:
         logger.error("ai_task operation=%s: every USE_* provider flag is false", request.operation)
         raise AIConfigurationError(
-            "No AI provider is enabled. Set at least one of USE_CLAUDE_API, USE_CHATGPT_API, "
+            "No AI provider is enabled. Set one of USE_COHERE_API (with a key), USE_CLAUDE_API, USE_CHATGPT_API, "
             "USE_CLAUDE_WEB, USE_CHATGPT_WEB to true in .env.",
             details={"operation": request.operation, "flags": config.get("flags", {})},
         )

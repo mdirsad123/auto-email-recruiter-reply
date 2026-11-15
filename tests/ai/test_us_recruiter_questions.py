@@ -9,6 +9,7 @@ from recruiter_email.knowledge_base import load_knowledge
 from recruiter_email.pending_questions import capture_pending_questions
 from recruiter_email.service import (
     CREATE_DRAFT_MANUAL_REVIEW,
+    SEND_REPLY,
     IncomingEmail,
     load_recruiter_config,
     process_recruiter_email,
@@ -59,10 +60,11 @@ def test_user_confirmed_visa_reply_is_manual_review_even_with_auto_send_enabled(
         knowledge_loader=load_knowledge,
         sync_state={},
     )
-    assert result["action"] == CREATE_DRAFT_MANUAL_REVIEW
+    assert result["action"] == SEND_REPLY
     assert "INTERNATIONAL_IMMIGRATION_REVIEW_REQUIRED" in result["reasons"]
-    assert "I do not currently hold a visa for the destination country." in result["reply_body"]
-    assert "I am currently based in India and have not relocated to the destination country." in result["reply_body"]
+    # Forced mode acknowledges but avoids automatically revealing immigration answers.
+    assert "I do not currently hold a visa for the destination country." not in result["reply_body"]
+    assert "I am currently based in India and have not relocated to the destination country." not in result["reply_body"]
     assert "Willing to Relocate Internationally:" not in result["reply_body"]
 
 

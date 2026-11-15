@@ -1,0 +1,980 @@
+{
+  "name": "JobBot Recruiter Email — 5m Live + Startup Catch-up (Sequential)",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 5,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "labelIds": [
+            "INBOX"
+          ],
+          "q": "in:inbox newer_than:3d -in:chats -in:sent -in:drafts -in:spam -in:trash"
+        },
+        "options": {}
+      },
+      "id": "604bd958-8658-470d-ad42-96ed9c540194",
+      "name": "Gmail Trigger (new inbox mail)",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        800,
+        1008
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xJCdVUe0gFuBt7b9",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Poll every 5m for NEW mail. If 2 or more arrive since last poll, the trigger can emit multiple items; the sequential queue below handles them one by one."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Normalize NEW Gmail Trigger and startup catch-up Gmail GET (raw or simplified).\n// No role keyword gating in n8n: Python owns recruiter/automated classification.\n// Configure label IDs once below, using Gmail Label > Get Many.\nconst LABEL_IDS = {\n  'JobBot/Recruiter/AutoReplied':  'Label_1299783815149907072',\n  'JobBot/Recruiter/DraftReady':   'Label_8514319105375278951',\n  'JobBot/Recruiter/ManualReview': 'Label_2042886854084769136',\n  'JobBot/Recruiter/Ignored':      'Label_3497480108052930954',\n};\nconst j = $json;\nconst clean = v => v === undefined || v === null ? '' : String(v);\nconst headerMap = {};\nconst raw = j.payload?.headers || j.headers || {};\nif (Array.isArray(raw)) {\n  for (const h of raw) if (h?.name) headerMap[clean(h.name).toLowerCase()] = clean(h.value);\n} else {\n  for (const [k, v] of Object.entries(raw)) {\n    const key = k.toLowerCase();\n    const s = clean(v);\n    headerMap[key] = s.toLowerCase().startsWith(key+':') ? s.slice(key.length+1).trim() : s;\n  }\n}\nconst fromValue = j.from?.value?.[0];\nconst fromAddr = clean(fromValue?.address || headerMap['from'] || j.From || j.from?.text || j.from).trim();\nconst fromHeader = fromValue?.address ? (fromValue?.name ? `${fromValue.name} <${fromValue.address}>` : fromAddr) : fromAddr;\nconst toText = clean(j.to?.text || headerMap['to'] || j.To || j.to);\nconst subject = clean(j.subject || j.Subject || headerMap['subject']);\nfunction decodeData(data) {\n  try { return Buffer.from(clean(data).replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8'); }\n  catch { return ''; }\n}\nfunction findParts(node, mime) {\n  if (!node) return '';\n  if (clean(node.mimeType).toLowerCase() === mime && node.body?.data) return decodeData(node.body.data);\n  for (const part of (node.parts || [])) { const found=findParts(part,mime); if(found) return found; }\n  return '';\n}\nfunction stripHtml(html) {\n  return clean(html).replace(/<style[\\s\\S]*?<\\/style>/gi,' ').replace(/<script[\\s\\S]*?<\\/script>/gi,' ')\n                    .replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&')\n                    .replace(/&lt;/gi,'<').replace(/&gt;/gi,'>');\n}\nlet body = clean(j.text || j.textPlain || j.plainText);\nif(!body) body = findParts(j.payload, 'text/plain');\nif(!body) body = decodeData(j.payload?.body?.data);\nif(!body) body = stripHtml(j.html || findParts(j.payload, 'text/html'));\nif(!body) body = clean(j.snippet); // last resort only: snippet is incomplete\nbody = body.replace(/\\r\\n/g,'\\n').slice(0,100000);\nconst headers = {};\nfor (const key of ['auto-submitted','precedence','list-unsubscribe','list-id','x-autoreply',\n                   'x-autorespond','return-path','reply-to','message-id','in-reply-to']) {\n  if (headerMap[key]) headers[key] = headerMap[key];\n}\nconst labelValues = (j.labelIds || []).map(String);\nconst handledLabels = [LABEL_IDS['JobBot/Recruiter/AutoReplied'], LABEL_IDS['JobBot/Recruiter/DraftReady']]\n    .filter(x => x && !String(x).startsWith('REPLACE'));\nconst already_processed_in_gmail = handledLabels.some(x => labelValues.includes(String(x)));\nif(!clean(j.id)) throw new Error('Missing Gmail message id: cannot dedupe safely');\nreturn {json:{message_id:clean(j.id),thread_id:clean(j.threadId || j.id),from:fromHeader,\n  from_address:(fromAddr.match(/<([^>]+)>/)?.[1] || fromAddr),to:toText,subject,body,\n  received_at:clean(j.internalDate || j.date || headerMap['date']),headers,\n  label_ids:LABEL_IDS,already_processed_in_gmail}};\n"
+      },
+      "id": "6fbedb26-44f6-4e8c-a0a7-501800ed2855",
+      "name": "Normalize Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8090/ai/recruiter-email-reply",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message_id: $json.message_id, thread_id: $json.thread_id, from: $json.from, to: $json.to, subject: $json.subject, body: $json.body, received_at: $json.received_at, headers: $json.headers }) }}",
+        "options": {
+          "timeout": 2400000
+        }
+      },
+      "id": "1c5490b7-345b-41df-abac-4a04708f0de7",
+      "name": "AI Recruiter Reply (dedupe + classify + facts + validate)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1696,
+        336
+      ],
+      "retryOnFail": false,
+      "onError": "continueErrorOutput",
+      "notes": "Duplicate check, AI classifier (inside the Claude/ChatGPT Project for web providers), experience_details.md retrieval + role-aware mapping, missing-value / version guards, reply generation, hallucination validation and the fixed 'Dear Recruiter,' greeting + signature all run in Python. 503 = all providers down."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "34811213-49ed-4a46-8fcc-c54496f6bce2",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "SEND_REPLY"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SEND_REPLY"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "ab13fb7e-931c-4e86-8c23-09d4771c305e",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "CREATE_DRAFT"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CREATE_DRAFT"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "de1794ee-c76d-4da8-b4a8-7620fa2496f6",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "CREATE_DRAFT_MANUAL_REVIEW"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CREATE_DRAFT_MANUAL_REVIEW"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "1883d601-02f1-42be-a2f5-06750724f274",
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "LABEL_MANUAL_REVIEW"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "LABEL_MANUAL_REVIEW"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "IGNORE"
+        }
+      },
+      "id": "661d9010-8280-4dab-a559-554442b5e975",
+      "name": "Route by action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1920,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "411475ff-cdc6-40ab-9d28-bf249f9b5705",
+              "leftValue": "={{ String($env.AUTO_SEND_RECRUITER_REPLY || 'false').toLowerCase() }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "true"
+            },
+            {
+              "id": "a4660951-3b32-4987-b2fb-4eab55942922",
+              "leftValue": "={{ $json.auto_send }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e5aeca1e-0dea-4a37-90ae-bbb9ee806ade",
+      "name": "Auto-send allowed? (env + API gate)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2144,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.message_id }}",
+        "emailType": "text",
+        "message": "={{ $('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.reply_body }}",
+        "options": {
+          "appendAttribution": false,
+          "replyToSenderOnly": true
+        }
+      },
+      "id": "f22e1639-9a08-491d-a84b-931053e7c59f",
+      "name": "Gmail: Reply in thread",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2368,
+        -80
+      ],
+      "webhookId": "fb90272f-cb81-4ec0-9016-5612a5ecc2f5",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xJCdVUe0gFuBt7b9",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "={{ $('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.reply_subject }}",
+        "message": "={{ $('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.reply_body }}",
+        "options": {
+          "threadId": "={{ $('Normalize Email').item.json.thread_id }}",
+          "sendTo": "={{ $('Normalize Email').item.json.from_address }}"
+        }
+      },
+      "id": "aeb98019-2569-4f4f-acb7-550b4414a66e",
+      "name": "Gmail: Create draft in thread",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2368,
+        144
+      ],
+      "webhookId": "e53cc5c2-0de4-4e0f-a80b-a210060768ef",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xJCdVUe0gFuBt7b9",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bf4a3666-7718-41bc-a581-fdf093513fa8",
+              "name": "message_id",
+              "type": "string",
+              "value": "={{ $('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.message_id }}"
+            },
+            {
+              "id": "9bd1f0da-1ecf-454c-83ef-d4a49ac84dac",
+              "name": "outcome",
+              "type": "string",
+              "value": "SENT"
+            },
+            {
+              "id": "0366bd12-18fc-4a80-bbb1-d1bce92b28ff",
+              "name": "reply_ref",
+              "type": "string",
+              "value": "={{ $json.id || '' }}"
+            },
+            {
+              "id": "e03b25c8-c88a-4bfa-a98d-d1d9ec11348c",
+              "name": "label_ids",
+              "type": "array",
+              "value": "={{ [$('Normalize Email').item.json.label_ids[$('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.label]].filter(v => v && !String(v).startsWith('REPLACE')) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a548a354-64d1-48ea-84eb-1cc1ea859282",
+      "name": "Outcome: SENT",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2592,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fcddf531-b3c8-447a-9c54-3570be208df6",
+              "name": "message_id",
+              "type": "string",
+              "value": "={{ $('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.message_id }}"
+            },
+            {
+              "id": "90e3469e-0ea7-45ab-9f9a-27e7d8a8cd19",
+              "name": "outcome",
+              "type": "string",
+              "value": "DRAFTED"
+            },
+            {
+              "id": "9b253302-f1e7-43fb-8ef4-22889078537d",
+              "name": "reply_ref",
+              "type": "string",
+              "value": "={{ $json.id || '' }}"
+            },
+            {
+              "id": "4e63e3ca-3a64-4109-a6d4-4f354319913a",
+              "name": "label_ids",
+              "type": "array",
+              "value": "={{ [$('Normalize Email').item.json.label_ids[$('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.label]].filter(v => v && !String(v).startsWith('REPLACE')) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f44e0b82-7274-418a-87f0-84e1036962af",
+      "name": "Outcome: DRAFTED",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2592,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "32350925-a907-43f2-a741-643260807c03",
+              "name": "message_id",
+              "type": "string",
+              "value": "={{ $('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.message_id }}"
+            },
+            {
+              "id": "27fb2441-eadb-4211-8315-6e39dea3bc64",
+              "name": "outcome",
+              "type": "string",
+              "value": "LABELED"
+            },
+            {
+              "id": "f7450494-3161-483c-ab95-0e85053ca4b5",
+              "name": "reply_ref",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "638a47cf-0eba-4424-9600-c5d89ecaffe4",
+              "name": "label_ids",
+              "type": "array",
+              "value": "={{ [$('Normalize Email').item.json.label_ids[$('AI Recruiter Reply (dedupe + classify + facts + validate)').item.json.label]].filter(v => v && !String(v).startsWith('REPLACE')) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "94a833dd-e8ce-4c6b-a228-001f6fb013a8",
+      "name": "Outcome: LABELED",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2592,
+        336
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "15a23374-59e1-4347-b374-39349235ca41",
+      "name": "Collect outcome",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2816,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $json.message_id }}",
+        "labelIds": "={{ $json.label_ids }}"
+      },
+      "id": "84d8daaf-a068-4ea1-9445-4b3858cff775",
+      "name": "Gmail: Mark / label message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3040,
+        144
+      ],
+      "webhookId": "f6864c42-d1f4-4399-9bc1-42b4c31edb52",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xJCdVUe0gFuBt7b9",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Fails harmlessly if the label IDs in 'Normalize Email' were not configured yet."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8090/ai/recruiter-email/mark-result",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message_id: $('Collect outcome').item.json.message_id, outcome: $('Collect outcome').item.json.outcome, reply_ref: $('Collect outcome').item.json.reply_ref || null }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "4bbdfee0-d45c-4146-be42-3a6d2ff22628",
+      "name": "Audit log: mark result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3264,
+        624
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "f6ace079-da17-4f72-8461-63cd7a4ddd0b",
+      "name": "Ignore (duplicate / not recruiter / no reply needed)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2144,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Normalize Email').item.json.message_id }}",
+        "labelIds": "={{ [$('Normalize Email').item.json.label_ids['JobBot/Recruiter/ManualReview']].filter(v => v && !String(v).startsWith('REPLACE')) }}"
+      },
+      "id": "b0a555d3-8054-4e75-94ca-80a90be49e1c",
+      "name": "Gmail: Label manual review (API error)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1920,
+        528
+      ],
+      "webhookId": "bc3a8133-aab7-44f3-8e52-fb297a992c55",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xJCdVUe0gFuBt7b9",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Reached when the API returns 4xx/5xx (e.g. 503 ALL_PROVIDERS_UNAVAILABLE). Nothing is sent."
+    },
+    {
+      "parameters": {
+        "events": [
+          "init",
+          "activate"
+        ]
+      },
+      "id": "fdbb8e8f-2a71-4c03-81f6-033f703279fa",
+      "name": "Catch-up once: n8n started or workflow published",
+      "type": "n8n-nodes-base.n8nTrigger",
+      "typeVersion": 1,
+      "position": [
+        128,
+        816
+      ],
+      "notes": "Run the missed-email search ONCE after instance startup/restart or first workflow publication. No 15-minute backfill."
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": true,
+        "filters": {
+          "includeSpamTrash": false,
+          "q": "newer_than:7d -in:chats -in:sent -in:drafts -in:spam -in:trash -label:\"JobBot/Recruiter/AutoReplied\" -label:\"JobBot/Recruiter/DraftReady\"",
+          "readStatus": "both"
+        }
+      },
+      "id": "4778a268-c016-4459-bae2-e1ee597b5063",
+      "name": "Gmail: Backfill last 7 days (startup only)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        576,
+        816
+      ],
+      "webhookId": "84a383f7-460d-4317-9dd7-f654c86d338e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xJCdVUe0gFuBt7b9",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Read+unread catch-up only at instance start or workflow activation, not every five/fifteen minutes. Use 7d for weekends; customize search to 15d for longer downtime."
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "messageId": "={{ $json.id }}",
+        "simple": false,
+        "options": {}
+      },
+      "id": "2e3be080-68d6-4fff-99d8-803cf8c9e205",
+      "name": "Gmail: Fetch complete older email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        800,
+        816
+      ],
+      "webhookId": "058bb8d5-5f80-49f2-8842-38caf1a0107b",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xJCdVUe0gFuBt7b9",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Fetch raw message text for read + unread startup catch-up emails. API/Claude processing is sequential after Normalize Email."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cc1454b5-4122-4118-8687-4681259679da",
+              "leftValue": "={{ $json.already_processed_in_gmail }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "110cf468-eeb2-44b6-a84e-7124b8fed85a",
+      "name": "Already replied/drafted in Gmail?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1472,
+        496
+      ],
+      "notes": "Route only UNHANDLED emails to API. Checks already-sent/drafted Gmail labels, not recruiter keywords. Ignored mail passes."
+    },
+    {
+      "parameters": {},
+      "id": "cb958638-f921-4228-ad2f-e6aace7f3cd1",
+      "name": "Skip: Gmail already contains reply/draft label",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "options": {},
+        "batchSize": 1
+      },
+      "id": "10607bec-bee9-4f48-aa74-3a939610c058",
+      "name": "Process emails one by one (batch 1)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1248,
+        912
+      ],
+      "notes": "Both the 5-minute Gmail trigger and one-time startup catch-up feed this queue. Output 1 loops for every email; Output 0 fires only at the end."
+    },
+    {
+      "parameters": {},
+      "id": "14d27957-d83d-48a2-bfc1-6a7ab4f5cc7b",
+      "name": "Batch finished",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1472,
+        720
+      ],
+      "notes": "All emails in this poll/catch-up batch were handled sequentially."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8090/health",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "d431ec9b-cfaa-465d-bd04-4580fd576380",
+      "name": "Wait for Python API before catch-up",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        352,
+        816
+      ],
+      "retryOnFail": true,
+      "maxTries": 30,
+      "waitBetweenTries": 30000,
+      "notes": "FastAPI may take time to start after Windows power-on. Retry for about 15 minutes before giving up; never start mail backfill while API is unreachable."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger (new inbox mail)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Email": {
+      "main": [
+        [
+          {
+            "node": "Process emails one by one (batch 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Recruiter Reply (dedupe + classify + facts + validate)": {
+      "main": [
+        [
+          {
+            "node": "Route by action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail: Label manual review (API error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by action": {
+      "main": [
+        [
+          {
+            "node": "Auto-send allowed? (env + API gate)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail: Create draft in thread",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail: Create draft in thread",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Outcome: LABELED",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignore (duplicate / not recruiter / no reply needed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-send allowed? (env + API gate)": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Reply in thread",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail: Create draft in thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Reply in thread": {
+      "main": [
+        [
+          {
+            "node": "Outcome: SENT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Create draft in thread": {
+      "main": [
+        [
+          {
+            "node": "Outcome: DRAFTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome: SENT": {
+      "main": [
+        [
+          {
+            "node": "Collect outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome: DRAFTED": {
+      "main": [
+        [
+          {
+            "node": "Collect outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome: LABELED": {
+      "main": [
+        [
+          {
+            "node": "Collect outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect outcome": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Mark / label message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Mark / label message": {
+      "main": [
+        [
+          {
+            "node": "Audit log: mark result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Fetch complete older email": {
+      "main": [
+        [
+          {
+            "node": "Normalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already replied/drafted in Gmail?": {
+      "main": [
+        [
+          {
+            "node": "AI Recruiter Reply (dedupe + classify + facts + validate)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip: Gmail already contains reply/draft label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Catch-up once: n8n started or workflow published": {
+      "main": [
+        [
+          {
+            "node": "Wait for Python API before catch-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Backfill last 7 days (startup only)": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Fetch complete older email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process emails one by one (batch 1)": {
+      "main": [
+        [
+          {
+            "node": "Batch finished",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Already replied/drafted in Gmail?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit log: mark result": {
+      "main": [
+        [
+          {
+            "node": "Process emails one by one (batch 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ignore (duplicate / not recruiter / no reply needed)": {
+      "main": [
+        [
+          {
+            "node": "Process emails one by one (batch 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip: Gmail already contains reply/draft label": {
+      "main": [
+        [
+          {
+            "node": "Process emails one by one (batch 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Label manual review (API error)": {
+      "main": [
+        [
+          {
+            "node": "Process emails one by one (batch 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Python API before catch-up": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Backfill last 7 days (startup only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "0330fc59-1d87-45ff-acae-f2fe190bde95",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6a35e1486b8f430161b5755196ef1954fef5b60132669cfabc2b9a28437fe1f4"
+  },
+  "nodeGroups": [],
+  "id": "djwhpbaTQtbzj4Vl",
+  "tags": []
+}

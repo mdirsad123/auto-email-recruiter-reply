@@ -45,14 +45,16 @@ def flags(api_c, api_o, web_c, web_o):
     (flags("true", "false", "false", "false"), ["claude_api"]),
     (flags("false", "false", "false", "true"), ["chatgpt_web"]),
     (flags("FALSE", "0", "no", "off"), []),
-    (flags("TRUE", "1", "yes", "on"), ALL_PROVIDERS),
+    (flags("TRUE", "1", "yes", "on"), ["claude_api", "chatgpt_api", "claude_web", "chatgpt_web"]),
 ])
 def test_enabled_providers_follow_flags_in_fixed_order(env, expected):
     assert get_enabled_providers(load_ai_config(env)) == expected
 
 
 def test_unset_flag_defaults_to_true():
-    assert read_provider_flags({"USE_CLAUDE_API": "false"}) == {
+    flags = read_provider_flags({"USE_CLAUDE_API": "false"})
+    assert all(not flags[name] for name in ("cohere_api_1", "cohere_api_2", "cohere_api_3"))
+    assert {k: flags[k] for k in ("claude_api", "chatgpt_api", "claude_web", "chatgpt_web")} == {
         "claude_api": False, "chatgpt_api": True, "claude_web": True, "chatgpt_web": True}
 
 

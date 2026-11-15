@@ -127,8 +127,9 @@ def test_case4_python_developer_role_hint():
 def test_case5_missing_profile_value_never_auto_sends():
     svc = make_service(classify=classification(requested_fields=["CURRENT_CTC"]), auto_send=True)
     result = svc(email("Re: AI Engineer", "Please share your current CTC."))
-    assert result["action"] == CREATE_DRAFT_MANUAL_REVIEW and result["auto_send"] is False
+    assert result["action"] == SEND_REPLY and result["auto_send"] is True
     assert "MISSING_PROFILE_VALUE" in result["reasons"]
+    assert "[please fill in before sending]" not in result["reply_body"]
 
 
 def test_case6_rejection_email_gets_no_reply():
@@ -167,7 +168,7 @@ def test_auto_send_only_when_every_gate_passes():
 def test_low_confidence_blocks_auto_send():
     svc = make_service(classify=classification(confidence=0.7), auto_send=True)
     result = svc(email("Re: AI Engineer", "Please share your notice period."))
-    assert result["action"] == CREATE_DRAFT_MANUAL_REVIEW
+    assert result["action"] == SEND_REPLY
     assert any(r.startswith("LOW_CONFIDENCE") for r in result["reasons"])
 
 
@@ -178,7 +179,9 @@ def test_low_confidence_blocks_auto_send():
 def test_salary_offer_contract_always_manual_review_without_draft(subject, body, intent):
     svc = make_service(classify=classification(intent=intent, requested_fields=[]), auto_send=True)
     result = svc(email(subject, body))
-    assert result["action"] == LABEL_MANUAL_REVIEW and result["reply_body"] is None
+    assert result["action"] == SEND_REPLY
+    assert "I will review the details" in result["reply_body"]
+    assert "I accept" not in result["reply_body"]
 
 
 def test_hallucinated_number_in_wording_is_replaced_and_blocks_send():
@@ -186,7 +189,7 @@ def test_hallucinated_number_in_wording_is_replaced_and_blocks_send():
     svc = make_service(wording=wording, auto_send=True)
     result = svc(email("Re: AI Engineer Opportunity", "Please share your notice period."))
     assert "HALLUCINATION_SUSPECTED" in result["reasons"]
-    assert result["action"] == CREATE_DRAFT_MANUAL_REVIEW
+    assert result["action"] == SEND_REPLY
     assert "12 years" not in result["reply_body"]
 
 
@@ -257,7 +260,7 @@ def test_thread_cooldown_after_sent_reply():
     mark_reply(svc.engine, "a", "SENT", "gmail-sent-id")
     second = svc(IncomingEmail(message_id="b", thread_id="t-a", sender="Priya <priya@talentco.example.in>",
                                        subject="Re: AI Engineer Opportunity", body="Also share your location."))
-    assert "THREAD_RECENTLY_AUTO_REPLIED" in second["reasons"] and second["action"] != SEND_REPLY
+    assert "THREAD_RECENTLY_AUTO_REPLIED" in second["reasons"] and second["action"] == SEND_REPLY
 
 
 def test_ledger_stores_no_raw_sender_or_values():

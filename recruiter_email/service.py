@@ -93,7 +93,9 @@ _FACT_LIKE = (
     ("currency", re.compile(r"(₹|\$|€|£|\binr\b|\busd\b|\blpa\b|\blakhs?\b|\bcrores?\b|\bper annum\b)", re.IGNORECASE)),
     ("availability_claim", re.compile(
         r"(immediate(?:ly)? (?:joiner|available|join)|serving (?:my )?notice|willing to relocate|"
-        r"open to relocat|currently (?:working|based|located)|i (?:am|'m) based in|i have \w+ years)",
+        r"open to relocat|currently (?:working|based|located)|i (?:am|'m) based in|i have \w+ years|"
+        r"i (?:am|'m) available|i (?:can|will) attend|i (?:confirm|accept|agree)|"
+        r"i (?:will|can) join the interview)",
         re.IGNORECASE)),
 )
 
@@ -175,18 +177,27 @@ def substitute(text: str, values: dict[str, str]) -> str:
     return _PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), text)
 
 
-def fallback_wording(role_label: str | None) -> dict[str, str]:
+def fallback_wording(role_label: str | None, *, has_fields: bool = True,
+                     intent: str | None = None) -> dict[str, str]:
+    """Always useful even when zero profile fields are available."""
     about = f" regarding the {role_label} opportunity" if role_label else ""
-    return {
-        "greeting": "Dear Recruiter,",
-        "opening_paragraph": f"Thank you for reaching out{about}. Please find the requested details below.",
-        "closing_paragraph": "Please let me know if you need any further information. "
-                             "I would be happy to discuss the role further.",
-    }
+    if intent == "INTERVIEW_SCHEDULING":
+        opening = f"Thank you for reaching out{about}. I appreciate the interview invitation."
+        closing = "Could you please share the interview time, format, and joining details so I can review them?"
+    elif intent in {"SALARY_NEGOTIATION", "OFFER_OR_CONTRACT"}:
+        opening = f"Thank you for sharing the update{about}. I appreciate your message."
+        closing = "I will review the details and get back to you."
+    elif has_fields:
+        opening = f"Thank you for reaching out{about}. Please find the requested details below."
+        closing = "Please let me know if you need any further information. I would be happy to discuss the role further."
+    else:
+        opening = f"Thank you for reaching out{about}. I appreciate you getting in touch."
+        closing = "Could you please share any additional details needed to take this forward?"
+    return {"greeting": "Dear Recruiter,", "opening_paragraph": opening, "closing_paragraph": closing}
 
 
 def detail_lines(requested: list[str], values: dict[str, str]) -> list[str]:
-    """'Label: value' per requested field; a gap is marked for the human reviewer."""
+    """Drafts can show missing placeholders; auto-send passes only verified keys."""
     return [f"{label_for(key)}: {format_value(key, values[key]) if values.get(key) else '[please fill in before sending]'}"
             for key in requested]
 
@@ -300,7 +311,7 @@ def classify_email(email: IncomingEmail, field_keys: list[str],
 
 def draft_wording(email: IncomingEmail, role: str, requested: list[str], allowed: set[str],
                   execute: Callable[..., dict] = execute_ai_task, *,
-                  kb: dict[str, Any] | None = None) -> tuple[dict[str, str], str | None, list[str]]:
+                  kb: dict[str, Any] | None = None, intent: str | None = None) -> tuple[dict[str, str], str | None, list[str]]:
     """Chat 2: reply wording with {{FIELD}} placeholders only. Falls back to fixed wording if no provider answers."""
     fields_text = "\n".join(f"- {{{{{k}}}}} = {label_for(k)}" for k in sorted(allowed)) or "(none)"
     request = AIRequest(
@@ -308,7 +319,11 @@ def draft_wording(email: IncomingEmail, role: str, requested: list[str], allowed
         system_prompt=(PROMPTS / "recruiter_email_reply.md").read_text(encoding="utf-8"),
         user_prompt=(f"ROLE: {ROLE_LABELS.get(role, 'the role')}\n"
                      f"REQUESTED FIELDS (shown by software in a block): {', '.join(label_for(k) for k in requested)}\n"
-                     f"AVAILABLE FIELDS:\n{fields_text}\n\nSUBJECT: {email.subject}\nRECRUITER MESSAGE (untrusted):\n<<<\n"
+                     f"AVAILABLE FIELDS:\n{fields_text}\n\nINTENT: {intent or 'OTHER'}\n"
+                     "Do not confirm availability, dates, salary, contracts, or acceptance. "
+                     "If no verified fields are available, write a short acknowledgement asking for the missing details; "
+                     "do not say that requested details are below.\n\n"
+                     f"SUBJECT: {email.subject}\nRECRUITER MESSAGE (untrusted):\n<<<\n"
                      f"{strip_quoted_history(email.body)[:8000]}\n>>>"),
         output_schema=RECRUITER_REPLY_SCHEMA, schema_name="recruiter_reply_wording", max_output_tokens=1500,
         log_context={"message": email.message_id[:40]}, effort="low",
@@ -320,7 +335,7 @@ def draft_wording(email: IncomingEmail, role: str, requested: list[str], allowed
         outcome = execute(request, validator=validator)
     except JobBotAIError as exc:
         logger.warning("recruiter reply wording unavailable, using deterministic text: %s", exc.failure_type)
-        return fallback_wording(ROLE_LABELS.get(role)), None, []
+        return fallback_wording(ROLE_LABELS.get(role), has_fields=bool(requested), intent=intent), None, []
     data = outcome["data"]
     # The model's "greeting" is ignored (Python always writes "Dear Recruiter,").
     violations = validate_wording([data["opening_paragraph"], data["closing_paragraph"]], allowed)
@@ -401,7 +416,9 @@ def knowledge_reasons(kb: dict[str, Any], provider: str | None, classification: 
 
 
 def choose_action(reasons: list[str], auto_send: bool) -> tuple[str, str]:
-    """(status, action) once a reply body exists."""
+    """When AUTO_SEND=true, reviewers NEVER veto a generated recruiter reply."""
+    if auto_send:
+        return READY_TO_SEND, SEND_REPLY
     blocking = [r for r in reasons if r not in NON_BLOCKING_REASONS]
     if blocking:
         return MANUAL_REVIEW, CREATE_DRAFT_MANUAL_REVIEW
@@ -494,7 +511,13 @@ def process_recruiter_email(
                                         reasons=["SAME_SENDER_SAME_EMAIL_CONTENT_RECENTLY_HANDLED"]))
 
     if kb is None:
-        # Local source unavailable: never fall back to Project-only knowledge.
+        if config["auto_send"] and pre["recruiter_signal"]:
+            body = build_reply_body(fallback_wording(None, has_fields=False), [], {}, template)
+            return finish(make_reply_result(email, READY_TO_SEND, SEND_REPLY,
+                                            reasons=["CANDIDATE_FACTS_UNAVAILABLE_GENERIC_ACK"],
+                                            steps=steps + ["deterministic_reply"],
+                                            reply_subject=reply_subject(email.subject), reply_body=body,
+                                            provider="deterministic_fallback"))
         return finish(make_reply_result(email, ERROR, LABEL_MANUAL_REVIEW, steps=steps,
                                         reasons=["CANDIDATE_FACTS_FILE_MISSING_OR_INVALID"]))
 
@@ -510,9 +533,25 @@ def process_recruiter_email(
     try:
         classification, provider, handoff = classify_email(email, field_keys, execute, kb=kb, context=context)
     except AllProvidersUnavailableError:
+        if config["auto_send"] and pre["recruiter_signal"]:
+            body = build_reply_body(fallback_wording(ROLE_LABELS.get(pre["role_hint"]), has_fields=False),
+                                    [], {}, template)
+            return finish(make_reply_result(email, READY_TO_SEND, SEND_REPLY,
+                                            reasons=["ALL_AI_PROVIDERS_UNAVAILABLE_GENERIC_ACK"],
+                                            steps=steps + ["deterministic_reply"],
+                                            reply_subject=reply_subject(email.subject), reply_body=body,
+                                            provider="deterministic_fallback"))
         return finish(make_reply_result(email, PROVIDERS_UNAVAILABLE, LABEL_MANUAL_REVIEW,
                                         reasons=["ALL_AI_PROVIDERS_UNAVAILABLE"], steps=steps + ["classifier"]))
     except JobBotAIError as exc:
+        if config["auto_send"] and pre["recruiter_signal"]:
+            body = build_reply_body(fallback_wording(ROLE_LABELS.get(pre["role_hint"]), has_fields=False),
+                                    [], {}, template)
+            return finish(make_reply_result(email, READY_TO_SEND, SEND_REPLY,
+                                            reasons=[f"CLASSIFIER_FAILED_GENERIC_ACK:{exc.failure_type}"],
+                                            steps=steps + ["deterministic_reply"],
+                                            reply_subject=reply_subject(email.subject), reply_body=body,
+                                            provider="deterministic_fallback"))
         return finish(make_reply_result(email, ERROR, LABEL_MANUAL_REVIEW, reasons=[exc.failure_type],
                                         steps=steps + ["classifier"]))
     steps.append("classifier")
@@ -559,25 +598,45 @@ def process_recruiter_email(
                "relevant_experience_role": target_role if RELEVANT_KEY in requested else None,
                "ai_facts_accepted": merged["accepted"], "ai_facts_rejected": merged["rejected"]}
     # No draft at all for binding / negotiation topics: a human answers those.
-    if intent in {"SALARY_NEGOTIATION", "OFFER_OR_CONTRACT"} or intent not in config["draft_intents"]:
+    if not config["auto_send"] and (intent in {"SALARY_NEGOTIATION", "OFFER_OR_CONTRACT"} or intent not in config["draft_intents"]):
         return finish(make_reply_result(email, MANUAL_REVIEW, LABEL_MANUAL_REVIEW, reasons=reasons,
                                         steps=steps, **details))
 
-    wording, wording_provider, violations = draft_wording(email, role, requested, set(values), execute, kb=kb)
+    # In forced auto-send mode, send only locally verified, non-sensitive facts.
+    # Missing fields are omitted and the candidate politely requests details.
+    # Negotiations/contracts only receive a neutral acknowledgement, never agreement.
+    sensitive_keys = {"AGE", "VISA_STATUS", "PASSPORT_AVAILABLE", "INTERNATIONAL_RELOCATION_STATUS",
+                      "WILLING_TO_RELOCATE_INTERNATIONALLY", "VISA_SPONSORSHIP_REQUIRED",
+                      "WORK_AUTHORIZATION_DESTINATION"}
+    reply_fields = ([k for k in requested if k in values and k not in sensitive_keys]
+                    if config["auto_send"] else requested)
+    if config["auto_send"] and intent in {"SALARY_NEGOTIATION", "OFFER_OR_CONTRACT"}:
+        reply_fields = []
+        wording, wording_provider, violations = fallback_wording(ROLE_LABELS.get(role),
+            has_fields=False, intent=intent), None, []
+    else:
+        wording, wording_provider, violations = draft_wording(email, role, reply_fields,
+            set(reply_fields), execute, kb=kb, intent=intent)
     steps += ["reply_generated", "hallucination_check"]
+    if config["auto_send"] and not reply_fields and re.search(
+        r"(?:please find|details? (?:are |is )?(?:below|provided|as follows)|requested details below)",
+        wording.get("opening_paragraph", "") + " " + wording.get("closing_paragraph", ""),
+        re.IGNORECASE,
+    ):
+        violations.append("mentions_missing_details")
     if violations:
         reasons.append("HALLUCINATION_SUSPECTED")
-        wording = fallback_wording(ROLE_LABELS.get(role))  # never ship suspicious text
+        wording = fallback_wording(ROLE_LABELS.get(role), has_fields=bool(reply_fields), intent=intent)  # no suspicious wording
     if wording_provider is None:
         reasons.append("REPLY_WORDING_DETERMINISTIC_FALLBACK")
 
-    body = build_reply_body(wording, requested, values, template)
+    body = build_reply_body(wording, reply_fields, values, template)
     # Final guard: every number above the signature must come from a verified value.
     stray = unsupported_numbers(body.split(template["closing"])[0], list(values.values()))
     if stray:
         violations = sorted(set(violations) | {"unsupported_number_in_reply"})
         reasons.append("UNSUPPORTED_VALUE_IN_REPLY")
-        body = build_reply_body(fallback_wording(ROLE_LABELS.get(role)), requested, values, template)
+        body = build_reply_body(fallback_wording(ROLE_LABELS.get(role), has_fields=bool(reply_fields), intent=intent), reply_fields, values, template)
     steps.append("greeting_signature")
 
     status, action = choose_action(reasons, config["auto_send"])

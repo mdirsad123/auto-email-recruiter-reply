@@ -1,3 +1,5 @@
+> **2026-11-15 UPDATE:** For Cohere-first fallback and `AUTO_SEND_RECRUITER_REPLY=true` forced sending, read `docs/COHERE_FORCE_AUTOSEND_UBUNTU.md` first. Older safety/manual-review instructions below describe the previous mode.
+
 # JobBot Recruiter Email Automation — JSON ledger + one-time startup catch-up
 
 Standalone FastAPI + n8n project (no PostgreSQL, SQLite or SQLAlchemy database).

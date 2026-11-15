@@ -617,7 +617,8 @@
     },
     {
       "parameters": {
-        "options": {}
+        "options": {},
+        "batchSize": 1
       },
       "id": "10607bec-bee9-4f48-aa74-3a939610c058",
       "name": "Process emails one by one (batch 1)",

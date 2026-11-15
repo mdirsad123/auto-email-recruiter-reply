@@ -1,3 +1,5 @@
+> **2026-11-15 UPDATE:** For Cohere-first fallback and `AUTO_SEND_RECRUITER_REPLY=true` forced sending, read `docs/COHERE_FORCE_AUTOSEND_UBUNTU.md` first. Older safety/manual-review instructions below describe the previous mode.
+
 # Missing recruiter questions + Claude tab cleanup patch (14 November 2026)
 
 - Added `AGE=25` based on candidate's last stated age in October/November 2026;

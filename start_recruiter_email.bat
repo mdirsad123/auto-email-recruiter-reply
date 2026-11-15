@@ -1,2 +1,2 @@
 @echo off
-call "D:\ird-projects\sahil_projects\jobbot-recruiter-email\scripts\start_api.bat"
+call "D:\ird-projects\sahil_projects\auto-email-recruiter-reply\scripts\start_api.bat"
